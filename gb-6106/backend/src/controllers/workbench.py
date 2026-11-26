@@ -8,15 +8,19 @@ def new_case(data, user):
         return cases.create(db, data, user["username"])
 
 
-def new_run(case_id, data, user):
-    with engine.begin() as db:
-        run = runs.enqueue(db, case_id, data.parameter, user["username"])
+def wake(run_id):
     try:
-        cache.lpush("workbench:wake", str(run["id"]))
+        cache.lpush("workbench:wake", str(run_id))
         cache.ltrim("workbench:wake", 0, 99)
     except RedisError:
         # The database holds the durable queue. The worker also polls it.
         pass
+
+
+def new_run(case_id, data, user):
+    with engine.begin() as db:
+        run = runs.enqueue(db, case_id, data.parameter, user["username"])
+    wake(run["id"])
     return run
 
 

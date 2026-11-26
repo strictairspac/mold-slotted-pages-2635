@@ -31,5 +31,19 @@ def require_role(role):
     return authorize
 
 
+def require_any(*roles):
+    allowed = set(roles)
+
+    def authorize(user=Depends(identity)):
+        if user["role"] not in allowed:
+            raise HTTPException(403, "当前账号没有此操作权限")
+        return user
+
+    return authorize
+
+
 operator = require_role(Role.OPERATOR)
 reviewer = require_role(Role.REVIEWER)
+# Pausing a replay for a work-ticket check and taking it over are handover
+# controls, open to the staff who ran the replay and to the business reviewer.
+handoff = require_any(Role.OPERATOR, Role.REVIEWER)

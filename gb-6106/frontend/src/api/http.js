@@ -5,7 +5,9 @@ export async function request(path, {method = "GET", data, raw = false, signal} 
   const current = session();
   if (current) headers.set("Authorization", `Bearer ${current.token}`);
   if (data !== undefined) headers.set("Content-Type", "application/json");
-  const response = await fetch(`/api${path}`, {method, headers, signal, body: JSON.stringify(data)});
+  const response = await fetch(`/api${path}`, {
+    method, headers, signal, body: data === undefined ? undefined : JSON.stringify(data),
+  });
   if (response.ok) return raw ? response : response.json();
   const error = await response.json().catch(() => ({}));
   if (response.status === 401 && current) {

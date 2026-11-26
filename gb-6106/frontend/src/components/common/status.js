@@ -1,4 +1,4 @@
-import { States } from "../../constants/states.js";
+import { States } from "../constants/states.js";
 import { el } from "../../utils/dom.js";
 
 export function status(value) {

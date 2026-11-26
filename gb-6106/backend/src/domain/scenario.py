@@ -1,7 +1,8 @@
 import re
 
-from .fixtures import FIXTURES
-from .page import HEADER_BYTES, SlottedPage
+from .fixtures import FIXTURES  # noqa: F401  (re-exported for seed and callers)
+from .page import HEADER_BYTES
+from .replay import ACTIONS, Replay
 
 
 CONFIG = {
@@ -19,9 +20,6 @@ CONFIG = {
     "palette": 6,
     "fixture": "C4#03 · GM-C4-P07",
 }
-
-ACTIONS = {"insert": "录入", "delete": "撤销", "update": "补记", "compact": "整理"}
-
 
 def validate(payload):
     if not isinstance(payload, dict) or not isinstance(payload.get("operations"), list):
@@ -49,57 +47,20 @@ def validate(payload):
                 raise ValueError(f"第 {step} 步备注不是有效 UTF-8 文本") from None
 
 
-def run(payload, parameter, db):
+def open_replay(payload, parameter, state=None):
+    """Build a replay engine positioned at the start or at a confirmed checkpoint."""
     validate(payload)
     if parameter < HEADER_BYTES:
         raise ValueError(f"至少需要 {HEADER_BYTES} 字节页头")
-    page = SlottedPage(parameter)
-    denied = 0
-    peak_waste = 0
-    compactions = 0
-    rows = []
-    for step, operation in enumerate(payload["operations"], 1):
-        action = operation["op"]
-        key = "" if action == "compact" else operation["key"]
-        prior = page.find(key)
-        pointer = page.slots[prior].offset if prior is not None else None
-        slot_id = prior
-        message = "完成"
-        try:
-            if action == "compact":
-                page.compact()
-                compactions += 1
-            elif action == "delete":
-                slot_id = page.delete(key)
-            else:
-                write = page.insert if action == "insert" else page.update
-                slot_id, compacted = write(key, operation["note"].encode())
-                if compacted:
-                    compactions += 1
-                    message = "压实后落盘"
-        except ValueError as exc:
-            denied += 1
-            message = str(exc)
-        slot = page.slots[slot_id] if slot_id is not None else None
-        peak_waste = max(peak_waste, page.fragmented)
-        rows.append({
-            "步骤": step, "操作": ACTIONS[action], "履历": key, "槽号": slot_id,
-            "原偏移": pointer, "现偏移": slot.offset if slot else None,
-            "记录字节": slot.length if slot else None, "连续空闲": page.contiguous,
-            "碎片字节": page.fragmented, "结果": message,
-        })
-    for index, item in enumerate(page.slots):
-        if item:
-            rows.append({
-                "步骤": None, "操作": "追溯地址", "履历": item.key, "槽号": index,
-                "原偏移": None, "现偏移": item.offset, "记录字节": item.length,
-                "连续空闲": page.contiguous, "碎片字节": page.fragmented,
-                "结果": page.read(index).decode(),
-            })
-    live = sum(item is not None for item in page.slots)
-    return {
-        "summary": f"最终保留 {live} 条履历，压实 {compactions} 次，拒绝 {denied} 条操作。",
-        "metrics": {"活槽位": live, "拒绝操作": denied, "最大碎片": peak_waste,
-                    "压实次数": compactions, "剩余字节": page.free},
-        "rows": rows,
-    }
+    replay = Replay.restore(parameter, state) if state is not None else Replay(parameter)
+    if replay.steps > len(payload["operations"]):
+        raise ValueError("断点进度超出操作列表")
+    return replay
+
+
+def run(payload, parameter, db=None):
+    """Run every operation in one pass; kept for callers that need no checkpoints."""
+    replay = open_replay(payload, parameter)
+    for operation in payload["operations"]:
+        replay.step(operation)
+    return replay.finalize()

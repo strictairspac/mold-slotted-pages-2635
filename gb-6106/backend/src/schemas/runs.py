@@ -18,3 +18,9 @@ class RunEntry(BaseModel):
     result: dict | None
     failure: str | None
     digest: str | None
+    total_steps: int
+    confirmed_step: int
+    halt_reason: str | None = None
+    taken_by: str | None = None
+    takeover_count: int
+    last_confirmed: dict | None = None

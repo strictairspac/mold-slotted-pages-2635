@@ -35,11 +35,19 @@ docker compose up -d --build --wait
 
 | 登录名 | 角色 | 可执行操作 |
 |---|---|---|
-| operator | 资料操作员 | 登记业务资料、设置「模拟页容量（字节，16–4096）」、提交、查看和下载结果 |
-| reviewer | 业务复核员 | 查看执行证据、签署单次复核、下载交接单 |
+| operator | 资料操作员 | 登记业务资料、设置「模拟页容量（字节，16–4096）」、提交、暂停/接办、查看和下载结果 |
+| reviewer | 业务复核员 | 查看执行证据、签署单次复核、暂停/接办、下载交接单 |
 | viewer | 只读观察员 | 查看资料、执行结果及审计，下载证据 |
 
 选用「C4#03 · GM-C4-P07」对应的演示资料，保存一份复演资料，再以默认参数 192 提交。worker 保存结果摘要、业务明细和 SHA-256。复核员登录后在「追溯地址表」签署。
+
+### 暂停、接办与续跑
+
+重放到一半需要核对工票时，在「槽页重放」对当前批次点「暂停核对」。暂停在当前步骤确认后落定，页面显示批次状态、已确认步数和最后确认的那一步。已确认暂停的批次不会被 worker 自行捡起，重启后同样停在暂停状态，必须有人「接办」才继续。
+
+接办会把批次重新派给队列，从最后确认的断点续跑：办成和被拒的步骤各自只记一回，最终槽号、偏移、拒绝记录与一口气跑完完全一致。两名交班员同时接办时只有一份活被派出，另一人会看到「只有已确认暂停的批次可以接办」。接办不等待旧进程退出——旧批次带世代号（epoch）写入，迟到的结果和失败都不会入账。
+
+只有完成（done）的批次开放「交班凭据」下载；暂停中或执行中的批次只展示进度，导出接口返回 409。暂停与接办由资料操作员和业务复核员操作，均写入审计表。
 
 ## 开发说明
 
@@ -52,7 +60,9 @@ docker compose up -d --build --wait
 
 从 `backend/src/domain/scenario.py` 修改业务入口和演示口径，运行 `docker compose up -d --build --wait` 查看变更。数据库表结构在 `backend/src/models` 和 `backend/migrations`，输入模型在 `backend/src/schemas`。业务页和请求接口在 `frontend/src/pages`、`frontend/src/api`。资料、执行、复核三个工作流实体各有独立表和 API；场景输入及结果保留在所属资料和批次中。
 
-角色枚举在 `backend/src/constants/roles.py`、`frontend/src/constants/roles.js`，用于服务端访问控制、账号初始化、前端导航与签署。批次状态在 `backend/src/constants/job_state.py`、`frontend/src/constants/states.js`，用于队列、状态 API、状态标记与轮询。登记、提交、完成和签署事件写入审计表。
+角色枚举在 `backend/src/constants/roles.py`、`frontend/src/constants/roles.js`，用于服务端访问控制、账号初始化、前端导航与签署。批次状态在 `backend/src/constants/job_state.py`、`frontend/src/constants/states.js`，用于队列、状态 API、状态标记与轮询。登记、提交、完成、暂停、接办和签署事件写入审计表。
+
+页内重放与断点保存在 `backend/src/domain/replay.py`，每一步确认后连同整页字节、槽目录、计数与已确认行一并提交为批次断点；续跑从此断点重建，因此与单次执行逐字节一致。队列的租约与世代号在 `backend/src/services/execution.py`，暂停与接办在 `backend/src/services/runs.py`。表结构升级由 `backend/migrations/v002_replay_checkpoints.py` 幂等执行。
 
 `COMPOSE_PROJECT_NAME` 设置栈名，`FRONTEND_PORT`、`BACKEND_PORT`、`DB_PORT` 设置端口。通过 `DB_PASSWORD`、`JWT_SECRET`、`DEMO_PASSWORD` 配置本地凭据。设置 `SEED_DEMO=false` 可关闭演示数据载入，此时数据库初始没有演示账号。数据库密码调整后，已有数据卷需在数据库内同步修改用户密码。
 
